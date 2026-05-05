@@ -2,6 +2,8 @@
 
 import os
 import math
+import random
+import numpy as np
 import torch
 import einops
 from accelerate import Accelerator
@@ -25,6 +27,13 @@ from data.util import collate_fn
 from log.log import TPS, Metrics
 from models.misc import load_detr_pretrain, save_checkpoint, load_checkpoint
 from models.misc import get_model
+
+
+def _worker_init_fn(worker_id: int):
+    """Seed each DataLoader worker so augmentation and sampling are reproducible."""
+    worker_seed = (torch.initial_seed() + worker_id) % (2 ** 32)
+    random.seed(worker_seed)
+    np.random.seed(worker_seed)
 from utils.nested_tensor import NestedTensor
 from submit_and_evaluate import submit_and_evaluate_one_model
 
@@ -77,8 +86,11 @@ def train_engine(config: dict):
         sample_intervals=config["SAMPLE_INTERVALS"],
         length_per_iteration=config["LENGTH_PER_ITERATION"],
         data_weights=data_weights,
+        clip_stride=config.get("CLIP_STRIDE", 1),
     )
     # Build training data loader:
+    _dl_generator = torch.Generator()
+    _dl_generator.manual_seed(config["SEED"])
     train_dataloader = DataLoader(
         dataset=train_dataset,
         sampler=train_sampler,
@@ -87,6 +99,8 @@ def train_engine(config: dict):
         prefetch_factor=config["PREFETCH_FACTOR"] if config["NUM_WORKERS"] > 0 else None,
         collate_fn=collate_fn,
         pin_memory=True,
+        generator=_dl_generator,
+        worker_init_fn=_worker_init_fn,
     )
 
     # Init the training states:
@@ -101,6 +115,7 @@ def train_engine(config: dict):
     load_detr_pretrain(
         model=model, pretrain_path=config["DETR_PRETRAIN"], num_classes=config["NUM_CLASSES"],
         default_class_idx=config["DETR_DEFAULT_CLASS_IDX"] if "DETR_DEFAULT_CLASS_IDX" in config else None,
+        class_init_idxs=config["DETR_CLASS_INIT_IDXS"] if "DETR_CLASS_INIT_IDXS" in config else None,
     )
     logger.success(
         log=f"Load the pre-trained DETR from '{config['DETR_PRETRAIN']}'. "
@@ -135,7 +150,8 @@ def train_engine(config: dict):
             path=config["RESUME_MODEL"],
             optimizer=optimizer if config["RESUME_OPTIMIZER"] else None,
             scheduler=scheduler if config["RESUME_SCHEDULER"] else None,
-            states=train_states,
+            states=train_states if config["RESUME_STATES"] else None,
+            checkpoint_class_init_idxs=config.get("CHECKPOINT_CLASS_INIT_IDXS"),
         )
         # Different processing on scheduler:
         if config["RESUME_SCHEDULER"]:
@@ -155,6 +171,19 @@ def train_engine(config: dict):
         train_dataloader, model, optimizer,
         # device_placement=[False]        # whether to place the data on the device
     )
+
+    # Early stopping state — only active when EARLY_STOPPING_PATIENCE is set in config
+    # and INFERENCE_DATASET is configured (so val metrics are produced each eval period).
+    _es_patience     = config.get("EARLY_STOPPING_PATIENCE", None)
+    _es_metric       = config.get("EARLY_STOPPING_METRIC", "HOTA")
+    _es_min_delta    = config.get("EARLY_STOPPING_MIN_DELTA", 0.001)
+    _es_best_val     = -1.0
+    _es_patience_ctr = 0
+    if _es_patience is not None and config.get("INFERENCE_DATASET") is None:
+        logger.warning(
+            "EARLY_STOPPING_PATIENCE is set but INFERENCE_DATASET is not — "
+            "early stopping requires a validation set and will have no effect."
+        )
 
     for epoch in range(train_states["start_epoch"], config["EPOCHS"]):
         logger.info(log=f"Start training epoch {epoch}.")
@@ -250,6 +279,40 @@ def train_engine(config: dict):
                     x_axis_step=epoch,
                     x_axis_name="epoch",
                 )
+
+                # Early stopping: track best val metric and save best checkpoint.
+                if _es_patience is not None:
+                    _current_val = eval_metrics[_es_metric].global_average
+                    if _current_val > _es_best_val + _es_min_delta:
+                        _es_best_val = _current_val
+                        _es_patience_ctr = 0
+                        save_checkpoint(
+                            model=model,
+                            path=os.path.join(outputs_dir, "checkpoint_best.pth"),
+                            states=train_states,
+                            optimizer=optimizer,
+                            scheduler=scheduler,
+                            only_detr=only_detr,
+                        )
+                        logger.success(
+                            log=f"[Early stopping] New best val {_es_metric}: {_es_best_val:.4f} "
+                                f"at epoch {epoch}. Saved checkpoint_best.pth."
+                        )
+                    else:
+                        _es_patience_ctr += 1
+                        logger.info(
+                            log=f"[Early stopping] No improvement in val {_es_metric} "
+                                f"({_current_val:.4f} vs best {_es_best_val:.4f}). "
+                                f"Patience: {_es_patience_ctr}/{_es_patience}."
+                        )
+                        if _es_patience_ctr >= _es_patience:
+                            logger.success(
+                                log=f"[Early stopping] Stopping at epoch {epoch} — "
+                                    f"no improvement for {_es_patience} consecutive eval periods. "
+                                    f"Best val {_es_metric}: {_es_best_val:.4f}."
+                            )
+                            scheduler.step()
+                            break
 
         logger.success(log=f"Finish training epoch {epoch}.")
         # Prepare for next step:

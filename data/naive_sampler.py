@@ -19,6 +19,7 @@ class NaiveSampler(Sampler):
             sample_mode: str = "random_interval",
             seed: int = 1025,
             data_weights: dict | None = None,
+            clip_stride: int = 1,
     ):
         super().__init__()
         self.data_source = data_source
@@ -29,6 +30,7 @@ class NaiveSampler(Sampler):
         self.sample_mode = sample_mode
         self.seed = seed
         self.data_weights = data_weights
+        self.clip_stride = clip_stride
         # Check for these parameters:
         assert len(sample_steps) == len(sample_lengths) == len(sample_intervals), \
             "The lengths of sample_steps, sample_lengths, and sample_intervals should be the same."
@@ -79,7 +81,7 @@ class NaiveSampler(Sampler):
                 # TODO: Add support for float weights.
                 # Sampling:
                 for sequence_name in self.data_source.annotations[dataset][split]:
-                    for frame_id in range(self.data_source.sequence_infos[dataset][split][sequence_name]["length"]):
+                    for frame_id in range(0, self.data_source.sequence_infos[dataset][split][sequence_name]["length"], self.clip_stride):
                         _sample_times = _weight
                         for _ in range(_sample_times):
                             if self.data_source.sequence_infos[dataset][split][sequence_name]["is_static"] is True:

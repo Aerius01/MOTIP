@@ -1,0 +1,16 @@
+SUPER_CONFIG_PATH: ./configs/r50_deformable_detr_motip_oceanfish.yaml
+
+# Pipeline 1: BFT (no trajectory augmentation) pretrain → OceanFish fine-tune
+RESUME_MODEL: ./pretrains/r50_deformable_detr_motip_bft_without_trajectory_augmentation.pth
+# BFT has 1 class (class 0); map all 6 OceanFish classes from it.
+# DETR_CLASS_INIT_IDXS (inherited) seeds from COCO first, then every entry here
+# overwrites it, so no -1 fallbacks are needed.
+CHECKPOINT_CLASS_INIT_IDXS: [0, 0, 0, 0, 0, 0]
+
+SEED: 42
+DATASET_SPLITS: [fold0/train]
+INFERENCE_SPLIT: fold0/val
+SCARCITY_FRAMES: 50
+
+EXP_NAME: p1_fold0_s050
+EXP_GROUP: p1_kfold

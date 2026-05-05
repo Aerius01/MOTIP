@@ -1,0 +1,12 @@
+SUPER_CONFIG_PATH: ./configs/r50_deformable_detr_motip_oceanfish.yaml
+
+RESUME_MODEL: ./pretrains/r50_deformable_detr_motip_bft_without_trajectory_augmentation.pth
+CHECKPOINT_CLASS_INIT_IDXS: [0, 0, 0, 0, 0, 0]
+
+SEED: 42
+DATASET_SPLITS: [fold3/train]
+INFERENCE_SPLIT: fold3/val
+SCARCITY_FRAMES: 200
+
+EXP_NAME: p1_fold3_s200
+EXP_GROUP: p1_kfold

@@ -13,13 +13,18 @@ accelerate_state = PartialState()
 
 def set_seed(seed: int):
     seed = seed + distributed_rank()
-    torch.manual_seed(seed)
-    np.random.seed(seed)
     random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
     os.environ["PYTHONHASHSEED"] = str(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
+        # Disable cuDNN algorithm auto-tuning so the same algorithm is selected
+        # every run. deterministic=True also eliminates non-deterministic ops.
+        # Note: deterministic mode can reduce throughput slightly.
+        torch.backends.cudnn.benchmark = False
+        torch.backends.cudnn.deterministic = True
     return
 
 

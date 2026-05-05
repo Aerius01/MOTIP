@@ -12,6 +12,8 @@ from .dancetrack import DanceTrack
 from .sportsmot import SportsMOT
 from .crowdhuman import CrowdHuman
 from .bft import BFT
+from .oceanfish import OceanFish
+from .mft_seadronessee import MftSeaDronesSee
 
 
 dataset_classes = {
@@ -19,6 +21,8 @@ dataset_classes = {
     "SportsMOT": SportsMOT,
     "CrowdHuman": CrowdHuman,
     "BFT": BFT,
+    "OceanFish": OceanFish,
+    "MftSeaDronesSee": MftSeaDronesSee,
 }
 
 
@@ -43,6 +47,9 @@ class JointDataset(Dataset):
 
         # Handle the parameters **kwargs:
         self.size_divisibility = kwargs.get("size_divisibility", 0)
+        # When set, each OceanFish training sequence is truncated to its first N frames
+        # (data-scarcity experiment tiers: 50 / 100 / 200 / 300 / None=full).
+        self._scarcity_frames = kwargs.get("scarcity_frames", None)
 
         # Load the datasets into "sequence_infos", "image_paths", and "annotations",
         # each of which is a dictionary with the dataset name and split as the key.
@@ -52,10 +59,14 @@ class JointDataset(Dataset):
         self.annotations = defaultdict(lambda: defaultdict(dict))
         for dataset, split in zip(datasets, splits):
             try:
+                extra = {}
+                if dataset == "OceanFish" and self._scarcity_frames is not None:
+                    extra["max_frames"] = self._scarcity_frames
                 dataset_class = dataset_classes[dataset](
                     data_root=data_root,
                     split=split,
                     load_annotation=True,
+                    **extra,
                 )
                 self.sequence_infos[dataset][split] = dataset_class.get_sequence_infos()
                 self.image_paths[dataset][split] = dataset_class.get_image_paths()

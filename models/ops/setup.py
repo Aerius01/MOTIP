@@ -20,6 +20,12 @@ from setuptools import setup
 
 requirements = ["torch", "torchvision"]
 
+# When FORCE_CUDA=1 is set, bypass PyTorch's compiler version check.
+# HPC systems often ship a GCC newer than what PyTorch's bounds table allows,
+# but CUDA compilation still works fine.
+if os.environ.get("FORCE_CUDA") == "1":
+    torch.utils.cpp_extension._check_cuda_version = lambda *a, **kw: None
+
 def get_extensions():
     this_dir = os.path.dirname(os.path.abspath(__file__))
     extensions_dir = os.path.join(this_dir, "src")
@@ -35,7 +41,7 @@ def get_extensions():
 
 
 
-    if torch.cuda.is_available() and CUDA_HOME is not None:
+    if (torch.cuda.is_available() or os.environ.get("FORCE_CUDA", "0") == "1") and CUDA_HOME is not None:
         extension = CUDAExtension
         sources += source_cuda
         define_macros += [("WITH_CUDA", None)]

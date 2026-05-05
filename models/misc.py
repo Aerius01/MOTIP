@@ -84,7 +84,24 @@ def accuracy(output, target, topk=(1,)):
     return res
 
 
-def load_detr_pretrain(model: nn.Module, pretrain_path: str, num_classes: int | None, default_class_idx: int | None = None):
+def load_detr_pretrain(model: nn.Module, pretrain_path: str, num_classes: int | None,
+                       default_class_idx: int | None = None,
+                       class_init_idxs: list[int] | None = None):
+    """
+    Load pre-trained DETR weights into the model.
+
+    Args:
+        model: The MOTIP model.
+        pretrain_path: Path to the DETR pretrain checkpoint.
+        num_classes: Number of output classes for the model's class head.
+        default_class_idx: COCO index to use when num_classes == 1 (default: 1 = person).
+        class_init_idxs: Per-class COCO indices for initializing the class head when
+            num_classes > 1. Length must equal num_classes. Duplicate indices receive
+            small random noise (1e-3) to break symmetry; unique indices are copied exactly.
+            Example: [16, 16, 16, 1, 16, 16] maps classes 0/1/2/5 to COCO bird (16),
+            class 3 to COCO person (1), and class 4 to COCO bird (16).
+            If None, the class head is left as randomly initialised.
+    """
     pretrain_model = torch.load(pretrain_path, map_location=lambda storage, loc: storage, weights_only=False)
     pretrain_state_dict = pretrain_model["model"]
     detr_state_dict = dict()
@@ -102,10 +119,27 @@ def load_detr_pretrain(model: nn.Module, pretrain_path: str, num_classes: int | 
                         detr_state_dict[k] = detr_state_dict[k][1:2]
                     else:
                         detr_state_dict[k] = detr_state_dict[k][default_class_idx:default_class_idx+1]
+                elif class_init_idxs is not None:
+                    assert len(class_init_idxs) == num_classes, (
+                        f"class_init_idxs length ({len(class_init_idxs)}) must equal num_classes ({num_classes})"
+                    )
+                    from collections import Counter
+                    idx_counts = Counter(class_init_idxs)
+                    rows = []
+                    for coco_idx in class_init_idxs:
+                        base_row = detr_state_dict[k][coco_idx]
+                        if idx_counts[coco_idx] > 1:
+                            # Multiple classes share this COCO init — add small noise to break symmetry.
+                            rows.append(base_row + torch.randn_like(base_row) * 1e-3)
+                        else:
+                            rows.append(base_row.clone())
+                    detr_state_dict[k] = torch.stack(rows, dim=0)
+                    print(f">>>> Initialised class head from COCO indices {class_init_idxs} "
+                          f"(noise applied to repeated indices).")
                 else:
-                    # print(">>>> Because the num_classes is not 1, we do not use the pretrained class head.")
-                    # detr_state_dict[k] = model_state_dict[k]
-                    raise NotImplementedError(f"Do not support detr pretrain loading for num_classes={num_classes}")
+                    print(">>>> Because the num_classes is not 1, we do not use the pretrained class head.")
+                    detr_state_dict[k] = model_state_dict[k]
+                    # raise NotImplementedError(f"Do not support detr pretrain loading for num_classes={num_classes}")
             elif num_classes == len(detr_state_dict[k]):    # Just fine for the classifier:
                 pass
             else:
@@ -154,7 +188,30 @@ def save_checkpoint(model, path, states: dict, optimizer, scheduler, only_detr: 
     return
 
 
-def load_checkpoint(model, path, states=None, optimizer=None, scheduler=None):
+def load_checkpoint(model, path, states=None, optimizer=None, scheduler=None,
+                    checkpoint_class_init_idxs: list[int] | None = None):
+    """
+    Load a MOTIP checkpoint into the model.
+
+    Args:
+        model: The MOTIP model.
+        path: Path to the checkpoint file.
+        states: Training states dict to update (start_epoch, global_step).
+        optimizer: Optimizer to restore state into (optional).
+        scheduler: Scheduler to restore state into (optional).
+        checkpoint_class_init_idxs: Per-class indices into the *checkpoint's* class head,
+            used when the checkpoint has a different number of classes than the model.
+            Length must equal the model's NUM_CLASSES.  Use -1 for any class whose row
+            should be kept from whatever was previously loaded (e.g. a COCO initialisation
+            applied by load_detr_pretrain).  Duplicate non-(-1) indices receive small
+            random noise (1e-3) to break symmetry.
+
+            Example (5-class pretrain → 6-class OceanFish):
+                [0, 1, 0, 1, -1, 0]
+                 ^marlin=fish  ^sealion=swimmer  ^baitball=fish(+noise)
+                              ^human=swimmer(+noise)  ^bird=-1(keep COCO)
+                                                               ^mahi=fish(+noise)
+    """
     load_state = torch.load(path, map_location=lambda storage, loc: storage, weights_only=False)
     model_state = load_state["model"]
 
@@ -162,7 +219,49 @@ def load_checkpoint(model, path, states=None, optimizer=None, scheduler=None):
         load_detr_pretrain(model=model, pretrain_path=path, num_classes=None)
         return
     else:
-        model.load_state_dict(model_state)
+        # Check for class_embed shape mismatches and either rebuild or skip them.
+        current_state = model.state_dict()
+        mismatched_keys = []
+        for k in model_state.keys():
+            if k in current_state and "class_embed" in k:
+                if model_state[k].shape != current_state[k].shape:
+                    if checkpoint_class_init_idxs is not None:
+                        # Rebuild this class-head tensor row by row, mixing checkpoint
+                        # rows with whatever is already in current_state (e.g. COCO init).
+                        num_classes = current_state[k].shape[0]
+                        assert len(checkpoint_class_init_idxs) == num_classes, (
+                            f"checkpoint_class_init_idxs length ({len(checkpoint_class_init_idxs)}) "
+                            f"must equal num_classes ({num_classes})"
+                        )
+                        from collections import Counter
+                        valid_idxs = [i for i in checkpoint_class_init_idxs if i >= 0]
+                        idx_counts = Counter(valid_idxs)
+                        rows = []
+                        for i, ckpt_idx in enumerate(checkpoint_class_init_idxs):
+                            if ckpt_idx == -1:
+                                # Keep the row already in the model (e.g. COCO-initialised).
+                                rows.append(current_state[k][i].clone())
+                            else:
+                                base_row = model_state[k][ckpt_idx]
+                                if idx_counts[ckpt_idx] > 1:
+                                    # Multiple classes share this source row — add noise.
+                                    rows.append(base_row + torch.randn_like(base_row) * 1e-3)
+                                else:
+                                    rows.append(base_row.clone())
+                        model_state[k] = torch.stack(rows, dim=0)
+                        print(f">>>> Rebuilt {k} using checkpoint_class_init_idxs={checkpoint_class_init_idxs} "
+                              f"(idx=-1 rows kept from prior initialisation).")
+                    else:
+                        mismatched_keys.append(k)
+                        print(f">>>> Skipping {k} due to shape mismatch: "
+                              f"checkpoint {model_state[k].shape} vs model {current_state[k].shape}")
+
+        # Remove keys that were not rebuilt (fall back to random init via strict=False).
+        for k in mismatched_keys:
+            del model_state[k]
+
+        # Load with strict=False to allow missing class_embed keys.
+        model.load_state_dict(model_state, strict=False)
 
     if optimizer is not None:
         optimizer.load_state_dict(load_state["optimizer"])

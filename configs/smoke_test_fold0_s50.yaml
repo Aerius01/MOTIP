@@ -1,0 +1,17 @@
+SUPER_CONFIG_PATH: ./configs/r50_deformable_detr_motip_oceanfish.yaml
+
+# Reproducibility
+SEED: 42
+
+# K-fold / scarcity settings for this run
+DATASET_SPLITS: [fold0/train]
+INFERENCE_SPLIT: fold0/val
+SCARCITY_FRAMES: 50
+
+# Cut the epoch ceiling and stop after the first non-improving eval
+# (SAVE_CHECKPOINT_PER_EPOCH=2 from parent → evals at epoch 1, 3, 5)
+EPOCHS: 6
+EARLY_STOPPING_PATIENCE: 1
+
+EXP_NAME: smoke_test_fold0_s50
+EXP_GROUP: smoke_test

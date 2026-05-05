@@ -1,0 +1,46 @@
+SUPER_CONFIG_PATH: ./configs/r50_deformable_detr_motip_dancetrack.yaml
+
+# Dataset:
+DATASETS: [MftSeaDronesSee]
+SAMPLE_LENGTHS: [20, ]            # parent has [30]; must equal REL_PE_LENGTH
+CLIP_STRIDE: 10                   # sample every Nth frame as a clip start; reduces ~42k clips/epoch to ~4k
+
+# Model:
+NUM_CLASSES: 5                    # fish | swimmer | swimmer+lifejacket | boat | life jacket
+NUM_ID_VOCABULARY: 50
+REL_PE_LENGTH: 20                 # must equal SAMPLE_LENGTHS
+MISS_TOLERANCE: 18                # must be <= REL_PE_LENGTH - 2
+
+# Augmentation (boosted for drone/maritime lighting):
+AUG_BRIGHTNESS: 0.5               # parent: 0.4
+AUG_CONTRAST: 0.5                 # parent: 0.4
+NUM_WORKERS: 15                   # parent: 6
+
+# Training (tuned for A100 80GB — increase BATCH_SIZE for better GPU utilisation):
+BATCH_SIZE: 4
+EPOCHS: 40
+SCHEDULER_MILESTONES: [30, 38]    # decay at 75% and 95% of epoch ceiling
+LR_WARMUP_EPOCHS: 1
+
+# Checkpoint — COCO DETR init; MOTIP parts from scratch.
+# COCO class indices: fish->bird(16), swimmer->person(1),
+#                    swimmer+jacket->person(1), boat->boat(9), lifejacket->person(1)
+DETR_PRETRAIN: ./pretrains/r50_deformable_detr_coco.pth
+DETR_CLASS_INIT_IDXS: [16, 1, 1, 9, 1]
+RESUME_MODEL:
+RESUME_OPTIMIZER: False
+RESUME_SCHEDULER: False
+RESUME_STATES: False
+
+# Inference — val split for early stopping:
+INFERENCE_DATASET: MftSeaDronesSee
+INFERENCE_SPLIT: val
+
+# Early stopping (monitors val HOTA every 2 epochs):
+EARLY_STOPPING_PATIENCE: 7       # 7 × 2 = 14 epochs without improvement → stop
+EARLY_STOPPING_METRIC: HOTA
+EARLY_STOPPING_MIN_DELTA: 0.001
+
+# Output:
+EXP_OWNER: oceanfish
+SAVE_CHECKPOINT_PER_EPOCH: 2
