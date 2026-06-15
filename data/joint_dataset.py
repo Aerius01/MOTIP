@@ -3,6 +3,7 @@
 # you should always use JointDataset to combine and organize them (even if you only used one dataset).
 
 import copy
+import os
 import torch
 from collections import defaultdict
 from torch.utils.data import Dataset
@@ -47,8 +48,10 @@ class JointDataset(Dataset):
 
         # Handle the parameters **kwargs:
         self.size_divisibility = kwargs.get("size_divisibility", 0)
-        # When set, each OceanFish training sequence is truncated to its first N frames
-        # (data-scarcity experiment tiers: 50 / 100 / 200 / 300 / None=full).
+        # When set, SCARCITY_FRAMES is the *total* annotated-frame budget across all
+        # OceanFish training sequences.  It is divided evenly (floor) across however
+        # many sequences exist in the requested split, and each sequence is then
+        # truncated to that per-sequence cap.
         self._scarcity_frames = kwargs.get("scarcity_frames", None)
 
         # Load the datasets into "sequence_infos", "image_paths", and "annotations",
@@ -61,7 +64,12 @@ class JointDataset(Dataset):
             try:
                 extra = {}
                 if dataset == "OceanFish" and self._scarcity_frames is not None:
-                    extra["max_frames"] = self._scarcity_frames
+                    # Divide the total budget evenly across sequences (floor division).
+                    # Count sequences from the filesystem before constructing the object,
+                    # mirroring what OceanFish._get_sequence_names() does internally.
+                    _seq_dir = os.path.join(data_root, "OceanFish", split)
+                    _n_seqs = len(os.listdir(_seq_dir))
+                    extra["max_frames"] = self._scarcity_frames // _n_seqs
                 dataset_class = dataset_classes[dataset](
                     data_root=data_root,
                     split=split,

@@ -3,7 +3,7 @@ SUPER_CONFIG_PATH: ./configs/r50_deformable_detr_motip_oceanfish.yaml
 SEED: 42
 DATASET_SPLITS: [fold3/train]
 INFERENCE_SPLIT: fold3/val
-SCARCITY_FRAMES: 50
+SCARCITY_FRAMES: 500
 
-EXP_NAME: p2_fold3_s050
+EXP_NAME: p2_fold3_s0500
 EXP_GROUP: p2_kfold

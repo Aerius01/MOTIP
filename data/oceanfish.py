@@ -26,7 +26,8 @@ class OceanFish(OneDataset):
             load_annotation=load_annotation,
         )
         # When set, each sequence is truncated to its first max_frames consecutive frames.
-        # This implements the data-scarcity tiers in the K-fold experiment.
+        # This is derived from SCARCITY_FRAMES // n_sequences by JointDataset, so that
+        # the total annotated frames across all sequences equals the configured budget.
         self.max_frames = max_frames
 
         # Prepare the data:
