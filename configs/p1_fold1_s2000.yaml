@@ -1,12 +1,13 @@
 SUPER_CONFIG_PATH: ./configs/r50_deformable_detr_motip_oceanfish.yaml
 
+# Pipeline 1: BFT (no trajectory augmentation) pretrain → OceanFish fine-tune
 RESUME_MODEL: ./pretrains/r50_deformable_detr_motip_bft_without_trajectory_augmentation.pth
 CHECKPOINT_CLASS_INIT_IDXS: [0, 0, 0, 0, 0, 0]
 
 SEED: 42
-DATASET_SPLITS: [fold3/train]
-INFERENCE_SPLIT: fold3/val
-SCARCITY_FRAMES: 50
+DATASET_SPLITS: [fold1/train]
+INFERENCE_SPLIT: fold1/val
+SCARCITY_FRAMES: 2000
 
-EXP_NAME: p1_fold3_s050
+EXP_NAME: p1_fold1_s2000
 EXP_GROUP: p1_kfold

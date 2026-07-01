@@ -1,5 +1,6 @@
 SUPER_CONFIG_PATH: ./configs/r50_deformable_detr_motip_oceanfish.yaml
 
+# Pipeline 1: BFT (no trajectory augmentation) pretrain → OceanFish fine-tune
 RESUME_MODEL: ./pretrains/r50_deformable_detr_motip_bft_without_trajectory_augmentation.pth
 CHECKPOINT_CLASS_INIT_IDXS: [0, 0, 0, 0, 0, 0]
 
